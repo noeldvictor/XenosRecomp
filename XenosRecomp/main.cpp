@@ -194,7 +194,7 @@ int main(int argc, char** argv)
 
         StringBuffer f;
 #ifdef REBLUE_RECOMP
-        f.println("#include \"bdengine/gpu/shader_cache.h\"");
+        f.println("#include \"gpu/shaders/shader_cache.h\"");
 #else
         f.println("#include \"shader_cache.h\"");
 #endif
