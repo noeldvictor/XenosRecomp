@@ -30,6 +30,7 @@ struct RecompiledShader
     IDxcBlob* dxil = nullptr;
     std::vector<uint8_t> spirv;
     uint32_t specConstantsMask = 0;
+    std::string sourceName;
 };
 
 // Per-shader recompile failures, collected from the parallel loop and reported before exit.
@@ -47,7 +48,7 @@ int main(int argc, char** argv)
 #ifndef XENOS_RECOMP_INPUT
     if (argc < 4)
     {
-        printf("Usage: XenosRecomp [input path] [output path] [shader common header file path]");
+        printf("Usage: XenosRecomp [input path] [output path] [shader common header file path] [optional: HLSL dump dir]");
         return 0;
     }
 #endif
@@ -76,6 +77,12 @@ int main(int argc, char** argv)
 #endif
         ;
 
+    std::string hlslDumpDir;
+    if (argc > 4)
+        hlslDumpDir = argv[4];
+    else if (const char* env = std::getenv("XENOS_RECOMP_HLSL_DUMP"))
+        hlslDumpDir = env;
+
     size_t includeSize = 0;
     auto includeData = readAllBytes(includeInput, includeSize);
     std::string_view include(reinterpret_cast<const char*>(includeData.get()), includeSize);
@@ -95,6 +102,7 @@ int main(int argc, char** argv)
             size_t fileSize = 0;
             auto fileData = readAllBytes(file.path().string().c_str(), fileSize);
             bool foundAny = false;
+            int containerIndex = 0;
 
             for (size_t i = 0; fileSize > sizeof(ShaderContainer) && i < fileSize - sizeof(ShaderContainer) - 1;)
             {
@@ -111,9 +119,14 @@ int main(int argc, char** argv)
                     if (shader.second)
                     {
                         shader.first->second.data = fileData.get() + i;
+                        std::string stem = file.path().stem().string();
+                        if (containerIndex > 0)
+                            stem += fmt::format(".{}", containerIndex);
+                        shader.first->second.sourceName = std::move(stem);
                         foundAny = true;
                     }
 
+                    ++containerIndex;
                     i += dataSize;
                 }
                 else
@@ -125,6 +138,9 @@ int main(int argc, char** argv)
             if (foundAny)
                 files.emplace_back(std::move(fileData));
         }
+
+        if (!hlslDumpDir.empty())
+            std::filesystem::create_directories(hlslDumpDir);
 
         std::atomic<uint32_t> progress = 0;
 
@@ -144,6 +160,22 @@ int main(int argc, char** argv)
                 recompiler.recompile(shader.data, include);
 
                 shader.specConstantsMask = recompiler.specConstantsMask;
+
+                if (!hlslDumpDir.empty())
+                {
+                    auto path = std::filesystem::path(hlslDumpDir) /
+                        (shader.sourceName.empty()
+                            ? fmt::format("{}_{:016X}", recompiler.isPixelShader ? "ps" : "vs", hash)
+                            : shader.sourceName);
+                    path += ".hlsl";
+
+                    std::string contents = fmt::format(
+                        "// {} shader  hash=0x{:016X}  specConstants=0x{:X}\n",
+                        recompiler.isPixelShader ? "pixel" : "vertex",
+                        hash, recompiler.specConstantsMask);
+                    contents.append(recompiler.out);
+                    writeAllBytes(path.string().c_str(), contents.data(), contents.size());
+                }
 
                 thread_local DxcCompiler dxcCompiler;
 
