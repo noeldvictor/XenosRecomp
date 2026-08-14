@@ -84,9 +84,13 @@ struct DeclUsageLocation
     uint32_t location;
 };
 
-// NOTE: These are specialized Vulkan locations for Unleashed Recompiled. Change as necessary. Likely not going to work with other games.
 static constexpr DeclUsageLocation USAGE_LOCATIONS[] =
 {
+#ifdef REBLUE_RECOMP
+    #define REBLUE_VERTEX_LOCATION_ROW(usage, index, location) { DeclUsage::usage, index, location },
+    REBLUE_VERTEX_INPUT_LOCATIONS(REBLUE_VERTEX_LOCATION_ROW)
+    #undef REBLUE_VERTEX_LOCATION_ROW
+#else
     { DeclUsage::Position, 0, 0 },
     { DeclUsage::Normal, 0, 1 },
     { DeclUsage::Tangent, 0, 2 },
@@ -104,6 +108,7 @@ static constexpr DeclUsageLocation USAGE_LOCATIONS[] =
     { DeclUsage::TexCoord, 6, 14 },
     { DeclUsage::TexCoord, 7, 15 },
     { DeclUsage::Position, 1, 15 },
+#endif
 };
 
 static constexpr std::pair<DeclUsage, size_t> INTERPOLATORS[] =
@@ -209,7 +214,6 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
         print("swapFloats(g_SwappedBlendWeights, ");
         break;
     case DeclUsage::TexCoord:
-        specConstantsMask |= SPEC_CONSTANT_SINT_TEXCOORD;
         print("sintTexcoord(g_SintTexcoords, swapFloats(g_SwappedTexcoords, ");
         break;
     case DeclUsage::Position:
@@ -1475,19 +1479,17 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
             out += '\t';
 
-#ifdef REBLUE_RECOMP
-            // SPIR-V needs every input tagged; the host reads bindings back from SPIR-V so the numbers aren't load-bearing.
-            print("[[vk::location({})]] ", i);
-#else
+            bool locatedInput = false;
             for (auto& usageLocation : USAGE_LOCATIONS)
             {
                 if (usageLocation.usage == vertexElement.usage && usageLocation.usageIndex == vertexElement.usageIndex)
                 {
                     print("[[vk::location({})]] ", usageLocation.location);
+                    locatedInput = true;
                     break;
                 }
             }
-#endif
+            assert(locatedInput);
 
             println("in {0} i{1}{2} : {3}{2},", usageType, USAGE_VARIABLES[uint32_t(vertexElement.usage)],
                 uint32_t(vertexElement.usageIndex), USAGE_SEMANTICS[uint32_t(vertexElement.usage)]);

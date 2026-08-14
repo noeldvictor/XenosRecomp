@@ -10,12 +10,27 @@
     #define SPEC_CONSTANT_REVERSE_Z         (1 << 4)
 #endif
 
-#ifdef REBLUE_RECOMP
-    // Recover raw int16 TEXCOORDs from R16G16(B16A16)_UINT bindings.
-    #define SPEC_CONSTANT_SINT_TEXCOORD     (1 << 2)
-#endif
+// SPIR-V vertex input locations, shared with reblue's host input-layout builder.
+// Every semantic BD declares, plus the fillers the host adds for D3D12.
+#define REBLUE_VERTEX_INPUT_LOCATIONS(X) \
+    X(Position,    0,  0) \
+    X(Position,    1,  1) \
+    X(Position,    2,  2) \
+    X(Position,    3,  3) \
+    X(Position,    4,  4) \
+    X(Normal,      0,  5) \
+    X(Tangent,     0,  6) \
+    X(Binormal,    0,  7) \
+    X(TexCoord,    0,  8) \
+    X(TexCoord,    1,  9) \
+    X(TexCoord,    2, 10) \
+    X(TexCoord,    3, 11) \
+    X(Color,       0, 12) \
+    X(BlendWeight, 0, 13) \
+    X(BlendIndices, 0, 14)
 
-#if !defined(__cplusplus) || defined(__INTELLISENSE__)
+// SPEC_CONSTANTS_ONLY keeps the HLSL below out of host C++ TUs, which IntelliSense would otherwise parse.
+#if (!defined(__cplusplus) || defined(__INTELLISENSE__)) && !defined(SHADER_COMMON_SPEC_CONSTANTS_ONLY)
 
 #define FLT_MIN asfloat(0xff7fffff)
 #define FLT_MAX asfloat(0x7f7fffff)
