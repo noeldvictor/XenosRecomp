@@ -10,24 +10,20 @@
     #define SPEC_CONSTANT_REVERSE_Z         (1 << 4)
 #endif
 
-// SPIR-V vertex input locations, shared with reblue's host input-layout builder.
-// Every semantic BD declares, plus the fillers the host adds for D3D12.
+// SPIR-V vertex input locations, shared with reblue's host input-layout
+// builder. A semantic missing here gets no location from the emitter.
 #define REBLUE_VERTEX_INPUT_LOCATIONS(X) \
-    X(Position,    0,  0) \
-    X(Position,    1,  1) \
-    X(Position,    2,  2) \
-    X(Position,    3,  3) \
-    X(Position,    4,  4) \
-    X(Normal,      0,  5) \
-    X(Tangent,     0,  6) \
-    X(Binormal,    0,  7) \
-    X(TexCoord,    0,  8) \
-    X(TexCoord,    1,  9) \
-    X(TexCoord,    2, 10) \
-    X(TexCoord,    3, 11) \
-    X(Color,       0, 12) \
-    X(BlendWeight, 0, 13) \
-    X(BlendIndices, 0, 14)
+    X(Position,  0,  0) \
+    X(Position,  1,  1) \
+    X(Position,  2,  2) \
+    X(Position,  3,  3) \
+    X(Position,  4,  4) \
+    X(Normal,    0,  5) \
+    X(Tangent,   0,  6) \
+    X(TexCoord,  0,  7) \
+    X(TexCoord,  1,  8) \
+    X(TexCoord,  2,  9) \
+    X(Color,     0, 10)
 
 // SPEC_CONSTANTS_ONLY keeps the HLSL below out of host C++ TUs, which IntelliSense would otherwise parse.
 #if (!defined(__cplusplus) || defined(__INTELLISENSE__)) && !defined(SHADER_COMMON_SPEC_CONSTANTS_ONLY)
