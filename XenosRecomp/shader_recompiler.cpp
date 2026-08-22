@@ -341,6 +341,23 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
     }
 #endif
 
+#ifdef REBLUE_RECOMP
+    // Stashed before the fetch statement: the kernel reuses UV registers as
+    // fetch destinations (r6.y = tfetch2D(..., r6.yw)).
+    const bool shadowTap = hasShadowTexture && !instr.isPredicated &&
+        instr.opcode == FetchOpcode::TextureFetch &&
+        instr.dimension == TextureDimension::Texture2D &&
+        strcmp(constNamePtr, "ShadowTexture") == 0 &&
+        instr.offsetX == 0 && instr.offsetY == 0 && shadowTapUVCount < 8;
+    if (shadowTap)
+    {
+        indent();
+        print("shadowTapUV[{}] = ", shadowTapUVCount);
+        printSrcRegister(2);
+        out += ";\n";
+    }
+#endif
+
     indent();
     print("r{}.", instr.dstRegister);
     printDstSwizzle(instr.dstSwizzle, false);
@@ -415,6 +432,26 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
     out += ";\n";
 
     printDstSwizzle01(instr.dstRegister, instr.dstSwizzle);
+
+#ifdef REBLUE_RECOMP
+    if (hasShadowTexture)
+    {
+        for (size_t i = 0; i < 4; i++)
+        {
+            if (getDestSwizzle(instr.dstSwizzle, i) <= FetchDestinationSwizzle::One)
+                shadowTapSlots.erase(uint32_t(instr.dstRegister * 4 + i));
+        }
+        if (shadowTap)
+        {
+            for (size_t i = 0; i < 4; i++)
+            {
+                if (getDestSwizzle(instr.dstSwizzle, i) == FetchDestinationSwizzle::X)
+                    shadowTapSlots[uint32_t(instr.dstRegister * 4 + i)] = shadowTapUVCount;
+            }
+            ++shadowTapUVCount;
+        }
+    }
+#endif
 
     if (instr.isPredicated)
     {
@@ -731,7 +768,44 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
     if (instr.exportData)
         vectorWriteMask &= ~instr.scalarWriteMask;
 
+#ifdef REBLUE_RECOMP
+    // A Sgt/Sge whose sources are ShadowTexture taps re-emits per lane as a
+    // filtered compare from the stashed tap UV, turning the guest's binary PCF
+    // into hardware-equivalent bilinear PCF. Anything else falls through.
+    bool shadowCmpRewritten = false;
+    if (vectorWriteMask != 0 && !instr.exportData && hasShadowTexture &&
+        (instr.vectorOpcode == AluVectorOpcode::Sgt || instr.vectorOpcode == AluVectorOpcode::Sge) &&
+        instr.src1Select && !instr.src1Negate && (instr.src1Register & 0x80) == 0 &&
+        instr.src2Select && !instr.src2Negate && (instr.src2Register & 0x80) == 0)
+    {
+        const uint32_t srcA = instr.src1Register & 0x3F;
+        const uint32_t srcB = instr.src2Register & 0x3F;
+        bool allTaps = instr.vectorDest != srcA && instr.vectorDest != srcB;
+        for (size_t i = 0; i < 4 && allTaps; i++)
+        {
+            if ((vectorWriteMask >> i) & 0x1)
+                allTaps = shadowTapSlots.find(srcA * 4 + (((instr.src1Swizzle >> (i * 2)) + i) & 0x3)) != shadowTapSlots.end();
+        }
+        if (allTaps)
+        {
+            for (size_t i = 0; i < 4; i++)
+            {
+                if (((vectorWriteMask >> i) & 0x1) == 0)
+                    continue;
+                const uint32_t compA = ((instr.src1Swizzle >> (i * 2)) + i) & 0x3;
+                const uint32_t compB = ((instr.src2Swizzle >> (i * 2)) + i) & 0x3;
+                indent();
+                println("r{}.{} = shadowCmp2D(ShadowTexture_Texture2DDescriptorIndex, shadowTapUV[{}], r{}.{});",
+                    instr.vectorDest, SWIZZLES[i], shadowTapSlots[srcA * 4 + compA], srcB, SWIZZLES[compB]);
+            }
+            shadowCmpRewritten = true;
+        }
+    }
+
+    if (vectorWriteMask != 0 && !shadowCmpRewritten)
+#else
     if (vectorWriteMask != 0)
+#endif
     {
         indent();
         if (!exportRegister.empty())
@@ -878,6 +952,17 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
 
         out += ";\n";
     }
+
+#ifdef REBLUE_RECOMP
+    if (hasShadowTexture && vectorWriteMask != 0 && exportRegister.empty())
+    {
+        for (size_t i = 0; i < 4; i++)
+        {
+            if ((vectorWriteMask >> i) & 0x1)
+                shadowTapSlots.erase(uint32_t(instr.vectorDest * 4 + i));
+        }
+    }
+#endif
 
     if (instr.scalarOpcode != AluScalarOpcode::RetainPrev)
     {
@@ -1135,6 +1220,17 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
         out += " = ps;\n";
     }
 
+#ifdef REBLUE_RECOMP
+    if (hasShadowTexture && scalarWriteMask != 0 && exportRegister.empty())
+    {
+        for (size_t i = 0; i < 4; i++)
+        {
+            if ((scalarWriteMask >> i) & 0x1)
+                shadowTapSlots.erase(uint32_t(instr.scalarDest * 4 + i));
+        }
+    }
+#endif
+
     if (instr.exportData)
     {
         uint32_t zeroMask = instr.scalarDestRelative ? (0b1111 & ~(instr.vectorWriteMask | instr.scalarWriteMask)) : 0;
@@ -1197,10 +1293,6 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 #ifdef UNLEASHED_RECOMP
     bool isMetaInstancer = false;
     bool hasIndexCount = false;
-#endif
-
-#ifdef REBLUE_RECOMP
-    bool hasShadowTexture = false;
 #endif
 
     for (uint32_t i = 0; i < constantTableContainer->constantTable.constants; i++)
@@ -1684,6 +1776,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         out += "\tfloat2 pixelCoord = 0.0;\n";
 #endif
         out += "\tCubeMapData cubeMapData = (CubeMapData)0;\n";
+#ifdef REBLUE_RECOMP
+        if (hasShadowTexture)
+            out += "\tfloat2 shadowTapUV[8] = (float2[8])0;\n";
+#endif
     }
 
     const be<uint32_t>* code = reinterpret_cast<const be<uint32_t>*>(shaderData + shaderContainer->virtualSize + shader->physicalOffset);

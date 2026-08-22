@@ -42,6 +42,12 @@ struct ShaderRecompiler : StringBuffer
     bool hasMtxPrevInvViewProjection = false;
 #endif
 
+#ifdef REBLUE_RECOMP
+    bool hasShadowTexture = false;
+    uint32_t shadowTapUVCount = 0;
+    std::unordered_map<uint32_t, uint32_t> shadowTapSlots;
+#endif
+
     void indent()
     {
         for (uint32_t i = 0; i < indentation; i++)

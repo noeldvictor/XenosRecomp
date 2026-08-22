@@ -124,6 +124,26 @@ float2 getWeights2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, f
     return select(isnan(texCoord), 0.0, frac(texCoord * getTexture2DDimensions(texture) + offset - 0.5));
 }
 
+#ifdef REBLUE_RECOMP
+// Bilinear-filtered shadow compare over the four neighboring depth texels.
+float shadowCmp2D(uint resourceDescriptorIndex, float2 texCoord, float ref)
+{
+    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+    int2 dimensions = int2(getTexture2DDimensions(texture));
+    float2 coord = texCoord * dimensions - 0.5;
+    float2 weights = frac(coord);
+    int2 base = int2(floor(coord));
+    int2 c0 = clamp(base, int2(0, 0), dimensions - 1);
+    int2 c1 = clamp(base + 1, int2(0, 0), dimensions - 1);
+    float4 taps = float4(
+        texture.Load(int3(c0, 0)).x,
+        texture.Load(int3(c1.x, c0.y, 0)).x,
+        texture.Load(int3(c0.x, c1.y, 0)).x,
+        texture.Load(int3(c1, 0)).x) > ref;
+    return lerp(lerp(taps.x, taps.y, weights.x), lerp(taps.z, taps.w, weights.x), weights.y);
+}
+#endif
+
 float w0(float a)
 {
     return (1.0f / 6.0f) * (a * (a * (-a + 3.0f) - 3.0f) + 1.0f);
