@@ -31,7 +31,11 @@ IDxcBlob* DxcCompiler::compile(const std::string& shaderSource, bool compilePixe
         if (compilePixelShader)
             target = L"-T ps_6_0";
         else
-            target = L"-T vs_6_0";
+            // 6.1, not 6.0: SV_ViewID is a shader model 6.1 semantic and the
+            // multiview stereo path declares it in every vertex shader. DXIL
+            // rejects it at 6.0 outright, and SPIR-V needs the same profile so
+            // both backends stay in step.
+            target = L"-T vs_6_1";
     }
 
     args[argCount++] = target;

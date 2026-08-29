@@ -55,6 +55,11 @@ struct PushConstants
 #define g_SwappedPositions         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 320)
 #define g_SintTexcoords            vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 324)
 #define g_ShadowPcfScale           vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 328)
+// Multiview stereo. Both zero unless bd_stereo is on, so the per-eye skew every
+// vertex shader ends with costs two loads and a multiply-add and changes
+// nothing.
+#define g_StereoSeparation         vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 332)
+#define g_StereoConvergence        vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 344)
 #else
 #define g_Booleans                 vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 256)
 #define g_SwappedTexcoords         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 260)
@@ -80,7 +85,9 @@ struct PushConstants
     uint g_SwappedBlendWeights : packoffset(c19.w); \
     uint g_SwappedPositions : packoffset(c20.x); \
     uint g_SintTexcoords : packoffset(c20.y); \
-    float g_ShadowPcfScale : packoffset(c20.z);
+    float g_ShadowPcfScale : packoffset(c20.z); \
+    float g_StereoSeparation : packoffset(c20.w); \
+    float g_StereoConvergence : packoffset(c21.z);
 
 #define g_Booleans(i) (g_BooleansArr[(i) / 4][(i) % 4])
 #else

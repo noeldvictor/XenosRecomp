@@ -1597,6 +1597,13 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         }
     #endif
 
+    #ifdef REBLUE_RECOMP
+        // Multiview: one draw renders both eyes and SV_ViewID says which
+        // one this invocation is for. Declared unconditionally - a pipeline
+        // with no view mask sees 0, and the skew below is zero anyway.
+        out += "\tin uint iViewID : SV_ViewID,\n";
+    #endif
+
         out += "\tout float4 oPos : SV_Position";
 
         for (auto& [usage, usageIndex] : INTERPOLATORS)
@@ -2387,6 +2394,23 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
     if (!isPixelShader && hasMtxProjection)
         out += "\toPos.xy += g_HalfPixelOffset * oPos.w;\n";
+#endif
+
+#ifdef REBLUE_RECOMP
+    // Per-eye stereo, after every other write to oPos including the
+    // half-pixel offset. clip.x += sep*clip.z - conv*clip.w is an off-axis
+    // frustum: the z term is the eye translation and gives the parallax,
+    // the w term moves the projection centre and sets the distance at
+    // which parallax is zero. The eyes take opposite signs so they diverge
+    // about the mono image.
+    //
+    // Doing it here rather than by patching the view-projection on the host
+    // is what makes multiview possible: the matrix is uploaded once, both
+    // eyes read it, and only this line differs between them.
+    if (!isPixelShader) {
+        out += "\tconst float eyeSign = (iViewID == 0) ? -1.0f : 1.0f;\n";
+        out += "\toPos.x += eyeSign * (g_StereoSeparation * oPos.z - g_StereoConvergence * oPos.w);\n";
+    }
 #endif
 
     out += "}";
