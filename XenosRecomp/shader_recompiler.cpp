@@ -2398,18 +2398,24 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
 #ifdef REBLUE_RECOMP
     // Per-eye stereo, after every other write to oPos including the
-    // half-pixel offset. clip.x += sep*clip.z - conv*clip.w is an off-axis
-    // frustum: the z term is the eye translation and gives the parallax,
-    // the w term moves the projection centre and sets the distance at
-    // which parallax is zero. The eyes take opposite signs so they diverge
-    // about the mono image.
+    // half-pixel offset. clip.x += sep - conv*clip.w is an off-axis frustum:
+    // the constant term is the lateral eye translation, which after the
+    // perspective divide becomes a shift inversely proportional to depth -
+    // that is the parallax. The w term moves the projection centre and sets
+    // the distance at which parallax is zero. The eyes take opposite signs so
+    // they diverge about the mono image.
+    //
+    // sep * oPos.z was the first version and gives no depth at all: clip.z and
+    // clip.w agree to a fraction of a percent past a few metres, so it divides
+    // out to a constant sideways slide of the whole image. Measured as +59px
+    // of disparity at the sky against +57px on the near ground.
     //
     // Doing it here rather than by patching the view-projection on the host
     // is what makes multiview possible: the matrix is uploaded once, both
     // eyes read it, and only this line differs between them.
     if (!isPixelShader) {
         out += "\tconst float eyeSign = (iViewID == 0) ? -1.0f : 1.0f;\n";
-        out += "\toPos.x += eyeSign * (g_StereoSeparation * oPos.z - g_StereoConvergence * oPos.w);\n";
+        out += "\toPos.x += eyeSign * (g_StereoSeparation - g_StereoConvergence * oPos.w);\n";
     }
 #endif
 
