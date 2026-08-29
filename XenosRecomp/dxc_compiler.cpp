@@ -46,6 +46,13 @@ IDxcBlob* DxcCompiler::compile(const std::string& shaderSource, bool compilePixe
     {
         args[argCount++] = L"-spirv";
         args[argCount++] = L"-fvk-use-dx-layout";
+        // DXC defaults its SPIR-V target to vulkan1.0, where the MultiView
+        // capability does not exist - so SV_ViewID lowers to a gl_ViewIndex
+        // the module is not allowed to declare, and the view index reads as
+        // zero for every view. That is the silent failure behind a multiview
+        // pass rendering view 0 and leaving every other layer cleared. Every
+        // target this runs on is Vulkan 1.1 or later (Adreno 650 included).
+        args[argCount++] = L"-fspv-target-env=vulkan1.1";
 
         if (!compilePixelShader)
             args[argCount++] = L"-fvk-invert-y";
