@@ -33,40 +33,33 @@
 
 #ifdef __spirv__
 
-// Guest constants used to be reached as vk::RawBufferLoad from a 64-bit device
-// address pushed here. That is a raw global memory load per invocation, and on
-// Adreno it bypasses the constant path entirely - measured at ~5x under the
-// hardware's fill floor on a Quest 2, and it forced OpCapability Int64, which an
-// Adreno 740 cannot compile at all.
+// Guest constants reach the shader as three uniform buffers, bound once and
+// re-based per draw with a dynamic offset.
 //
-// Now the constant chunks are bound as descriptors (g_ConstantChunks below) and
-// the push constants carry a chunk index and a byte offset into it. Both are
-// 32-bit and wave-uniform, so the address is uniform and the driver can issue a
-// scalar load and hoist it, which is what a constant read is supposed to be.
-// Same 24 bytes of push constants as the three addresses it replaces.
-struct PushConstants
-{
-    uint VertexShaderChunk;
-    uint VertexShaderOffset;
-    uint PixelShaderChunk;
-    uint PixelShaderOffset;
-    uint SharedChunk;
-    uint SharedOffset;
-};
+// They used to be vk::RawBufferLoad from a 64-bit device address in a push
+// constant. That is a raw global memory load per invocation: on Adreno it
+// bypasses the constant path entirely, measured at ~5x under the hardware's
+// fill floor on a Quest 2, and it forced OpCapability Int64, which an Adreno
+// 740 cannot compile at all. DXIL never did this - the #else branch has always
+// emitted a real cbuffer - which is why the cost was invisible on the desktop.
+//
+// A dynamic uniform buffer is what a D3D12 root descriptor already gives us:
+// one large buffer, a per-draw base offset, no descriptor write per draw.
+//
+// Sizes match the guest register files: 256 vertex float4s, 224 pixel, and the
+// 352-byte shared block as 22 uint4s. uint4 rather than float4 for the shared
+// block because it carries descriptor indices and swap masks as raw bits, and
+// a float register may flush a denormal on load.
+[[vk::binding(0, 0)]] cbuffer VertexShaderConstantsBuf { float4 g_VSC[256]; };
+[[vk::binding(1, 0)]] cbuffer PixelShaderConstantsBuf  { float4 g_PSC[224]; };
+[[vk::binding(2, 0)]] cbuffer SharedConstantsBuf       { uint4  g_SHC[22];  };
 
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PushConstants;
-
-// Typed reads out of a bound chunk. CHUNK and BASE come from the push constants
-// and OFF is a compile-time constant, so the whole address folds to
-// uniform + literal.
-#define BD_CLOAD_U(CHUNK, BASE, OFF)  g_ConstantChunks[CHUNK].Load((BASE) + (OFF))
-#define BD_CLOAD_F(CHUNK, BASE, OFF)  asfloat(g_ConstantChunks[CHUNK].Load((BASE) + (OFF)))
-#define BD_CLOAD_F2(CHUNK, BASE, OFF) asfloat(g_ConstantChunks[CHUNK].Load2((BASE) + (OFF)))
-#define BD_CLOAD_F4(CHUNK, BASE, OFF) asfloat(g_ConstantChunks[CHUNK].Load4((BASE) + (OFF)))
-
-#define BD_SHARED_U(OFF)  BD_CLOAD_U(g_PushConstants.SharedChunk,  g_PushConstants.SharedOffset,  OFF)
-#define BD_SHARED_F(OFF)  BD_CLOAD_F(g_PushConstants.SharedChunk,  g_PushConstants.SharedOffset,  OFF)
-#define BD_SHARED_F2(OFF) BD_CLOAD_F2(g_PushConstants.SharedChunk, g_PushConstants.SharedOffset, OFF)
+// Byte offset into the shared block -> element and component. Both fold at
+// compile time wherever OFF is a literal, which is everywhere except
+// g_Booleans.
+#define BD_SHARED_U(OFF)  (g_SHC[(OFF) >> 4][((OFF) >> 2) & 3])
+#define BD_SHARED_F(OFF)  asfloat(BD_SHARED_U(OFF))
+#define BD_SHARED_F2(OFF) float2(BD_SHARED_F(OFF), BD_SHARED_F((OFF) + 4))
 
 #ifdef REBLUE_RECOMP
 // 256-bit boolean register file (BD bool addresses reach ~158), then per-usage 16-bit-pair swap masks.
@@ -149,11 +142,10 @@ uint g_SpecConstants();
 // address makes every shader declare OpCapability Int64, and an Adreno 740
 // reports shaderInt64=0 and compiles none of them. See
 // research/20260830_0820_arm64-the-thor-renders-nothing.md.
-[[vk::binding(0, 0)]] ByteAddressBuffer g_ConstantChunks[8];
 
-[[vk::binding(1, 0)]] Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
-[[vk::binding(1, 1)]] Texture3D<float4> g_Texture3DDescriptorHeap[] : register(t0, space1);
-[[vk::binding(1, 2)]] TextureCube<float4> g_TextureCubeDescriptorHeap[] : register(t0, space2);
+[[vk::binding(3, 0)]] Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
+[[vk::binding(3, 1)]] Texture3D<float4> g_Texture3DDescriptorHeap[] : register(t0, space1);
+[[vk::binding(3, 2)]] TextureCube<float4> g_TextureCubeDescriptorHeap[] : register(t0, space2);
 SamplerState g_SamplerDescriptorHeap[] : register(s0, space3);
 #else
 Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);

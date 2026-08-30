@@ -1332,18 +1332,21 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         case RegisterSet::Float4:
         {
             const char* shaderName = isPixelShader ? "Pixel" : "Vertex";
+            // The bound uniform buffer for this stage. Indexed by register, not
+            // byte offset, so the whole address is a literal.
+            const char* constBuf = isPixelShader ? "g_PSC" : "g_VSC";
 
             if (constantInfo->registerCount > 1)
             {
                 uint32_t tailCount = (isPixelShader ? 224 : 256) - constantInfo->registerIndex;
 
-                println("#define {}(INDEX) select((INDEX) < {}, BD_CLOAD_F4(g_PushConstants.{}ShaderChunk, g_PushConstants.{}ShaderOffset, ({} + min(INDEX, {})) * 16), 0.0)",
-                    constantName, tailCount, shaderName, shaderName, constantInfo->registerIndex.get(), tailCount - 1);
+                println("#define {}(INDEX) select((INDEX) < {}, {}[{} + min(INDEX, {})], 0.0)",
+                    constantName, tailCount, constBuf, constantInfo->registerIndex.get(), tailCount - 1);
             }
             else
             {
-                println("#define {} BD_CLOAD_F4(g_PushConstants.{}ShaderChunk, g_PushConstants.{}ShaderOffset, {})",
-                    constantName, shaderName, shaderName, constantInfo->registerIndex * 16);
+                println("#define {} {}[{}]",
+                    constantName, constBuf, constantInfo->registerIndex.get());
             }
             
 #ifdef REBLUE_RECOMP
