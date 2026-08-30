@@ -107,10 +107,34 @@ uint g_SpecConstants();
 #define BOOL_BIT(n) ((g_Booleans((n) / 32u) & (1u << ((n) & 31u))) != 0)
 #endif
 
+#ifdef __spirv__
+// Guest constant chunks, bound ahead of the texture arrays in the same
+// descriptor sets.
+//
+// They cannot have a set of their own: the pipeline layout already binds four
+// (spaces 0/1/2 all point at the texture set, 3 at the samplers) and Adreno's
+// maxBoundDescriptorSets is exactly 4. They have to come before the texture
+// array because that array is the boundless range and the boundless range must
+// be last. Hence the explicit vk::binding on the heaps below, which shifts them
+// to binding 1 for SPIR-V and leaves the D3D12 register mapping alone -
+// [[vk::binding]] is ignored when DXC targets DXIL.
+//
+// Why this exists at all: reading a guest constant through a 64-bit device
+// address makes every shader declare OpCapability Int64, and an Adreno 740
+// reports shaderInt64=0 and compiles none of them. See
+// research/20260830_0820_arm64-the-thor-renders-nothing.md.
+[[vk::binding(0, 0)]] ByteAddressBuffer g_ConstantChunks[8];
+
+[[vk::binding(1, 0)]] Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
+[[vk::binding(1, 1)]] Texture3D<float4> g_Texture3DDescriptorHeap[] : register(t0, space1);
+[[vk::binding(1, 2)]] TextureCube<float4> g_TextureCubeDescriptorHeap[] : register(t0, space2);
+SamplerState g_SamplerDescriptorHeap[] : register(s0, space3);
+#else
 Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
 Texture3D<float4> g_Texture3DDescriptorHeap[] : register(t0, space1);
 TextureCube<float4> g_TextureCubeDescriptorHeap[] : register(t0, space2);
 SamplerState g_SamplerDescriptorHeap[] : register(s0, space3);
+#endif
 
 uint2 getTexture2DDimensions(Texture2D<float4> texture)
 {
