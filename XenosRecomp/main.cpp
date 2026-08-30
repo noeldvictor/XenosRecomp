@@ -194,6 +194,26 @@ int main(int argc, char** argv)
 #endif
 
                 IDxcBlob* spirv = dxcCompiler.compile(recompiler.out, recompiler.isPixelShader, false, true);
+
+                // Dumped beside the HLSL, because the HLSL cannot answer the
+                // question that matters for multiview. SV_ViewID lowers to a
+                // SPIR-V BuiltIn ViewIndex, and whether that survives is not
+                // visible in the source - a shader can declare SV_ViewID, use
+                // it, and still compile to SPIR-V that never reads a view
+                // index. The HLSL dump also does not compile standalone (it
+                // carries an #if selecting RawBufferLoad against cbuffer
+                // packoffset forms), so inspecting it out of band is awkward.
+                if (spirv != nullptr && !hlslDumpDir.empty())
+                {
+                    auto spvPath = std::filesystem::path(hlslDumpDir) /
+                        (shader.sourceName.empty()
+                            ? fmt::format("{}_{:016X}", recompiler.isPixelShader ? "ps" : "vs", hash)
+                            : shader.sourceName);
+                    spvPath += ".spv";
+                    writeAllBytes(spvPath.string().c_str(),
+                                  spirv->GetBufferPointer(),
+                                  spirv->GetBufferSize());
+                }
                 if (spirv == nullptr)
                 {
                     recordFailure("dxc-spirv-compile-failed");
