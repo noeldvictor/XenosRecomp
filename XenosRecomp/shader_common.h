@@ -273,8 +273,16 @@ float4 sintTexcoord(uint mask, float4 value, uint semanticIndex)
 {
     if ((mask & (1u << semanticIndex)) != 0)
     {
-        int4 si = (int4(asuint(value)) << 16) >> 16;
-        return float4(si);
+        // An SNORM binding means the driver has already converted; undo the
+        // normalisation rather than sign-extending raw bits out of a float.
+        // Binding an integer format against the float4 these shaders declare is
+        // a numeric-class mismatch that the Adreno 740 rejects outright
+        // (VUID-VkGraphicsPipelineCreateInfo-Input-08733), and SSCALED - the
+        // exact replacement - is not exposed as a vertex format there at all
+        // (VUID-VkVertexInputAttributeDescription-format-00623). Exact for
+        // every deliverable value: 32767 * (v / 32767) round-trips inside a
+        // float32 mantissa. Only -32768 is lost, clamping to -32767.
+        return value * 32767.0f;
     }
     return value;
 }
