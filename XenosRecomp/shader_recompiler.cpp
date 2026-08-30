@@ -1337,13 +1337,13 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             {
                 uint32_t tailCount = (isPixelShader ? 224 : 256) - constantInfo->registerIndex;
 
-                println("#define {}(INDEX) select((INDEX) < {}, vk::RawBufferLoad<float4>(g_PushConstants.{}ShaderConstants + ({} + min(INDEX, {})) * 16, 0x10), 0.0)",
-                    constantName, tailCount, shaderName, constantInfo->registerIndex.get(), tailCount - 1);
+                println("#define {}(INDEX) select((INDEX) < {}, BD_CLOAD_F4(g_PushConstants.{}ShaderChunk, g_PushConstants.{}ShaderOffset, ({} + min(INDEX, {})) * 16), 0.0)",
+                    constantName, tailCount, shaderName, shaderName, constantInfo->registerIndex.get(), tailCount - 1);
             }
             else
             {
-                println("#define {} vk::RawBufferLoad<float4>(g_PushConstants.{}ShaderConstants + {}, 0x10)",
-                    constantName, shaderName, constantInfo->registerIndex * 16);
+                println("#define {} BD_CLOAD_F4(g_PushConstants.{}ShaderChunk, g_PushConstants.{}ShaderOffset, {})",
+                    constantName, shaderName, shaderName, constantInfo->registerIndex * 16);
             }
             
 #ifdef REBLUE_RECOMP
@@ -1367,11 +1367,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         {
             for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
             {
-                println("#define {}_Texture{}DescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})",
+                println("#define {}_Texture{}DescriptorIndex BD_SHARED_U({})",
                     constantName, TEXTURE_DIMENSIONS[j], j * 64 + constantInfo->registerIndex * 4);
             }
 
-            println("#define {}_SamplerDescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})",
+            println("#define {}_SamplerDescriptorIndex BD_SHARED_U({})",
                 constantName, std::size(TEXTURE_DIMENSIONS) * 64 + constantInfo->registerIndex * 4);
 
             samplers.emplace(constantInfo->registerIndex, constantName);
@@ -1389,10 +1389,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             continue;
         for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
         {
-            println("#define s{}_Texture{}DescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})",
+            println("#define s{}_Texture{}DescriptorIndex BD_SHARED_U({})",
                 r, TEXTURE_DIMENSIONS[j], j * 64 + r * 4);
         }
-        println("#define s{}_SamplerDescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})",
+        println("#define s{}_SamplerDescriptorIndex BD_SHARED_U({})",
             r, std::size(TEXTURE_DIMENSIONS) * 64 + r * 4);
     }
 #endif

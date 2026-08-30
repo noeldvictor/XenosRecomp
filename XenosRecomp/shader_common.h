@@ -33,38 +33,64 @@
 
 #ifdef __spirv__
 
+// Guest constants used to be reached as vk::RawBufferLoad from a 64-bit device
+// address pushed here. That is a raw global memory load per invocation, and on
+// Adreno it bypasses the constant path entirely - measured at ~5x under the
+// hardware's fill floor on a Quest 2, and it forced OpCapability Int64, which an
+// Adreno 740 cannot compile at all.
+//
+// Now the constant chunks are bound as descriptors (g_ConstantChunks below) and
+// the push constants carry a chunk index and a byte offset into it. Both are
+// 32-bit and wave-uniform, so the address is uniform and the driver can issue a
+// scalar load and hoist it, which is what a constant read is supposed to be.
+// Same 24 bytes of push constants as the three addresses it replaces.
 struct PushConstants
 {
-    uint64_t VertexShaderConstants;
-    uint64_t PixelShaderConstants;
-    uint64_t SharedConstants;
+    uint VertexShaderChunk;
+    uint VertexShaderOffset;
+    uint PixelShaderChunk;
+    uint PixelShaderOffset;
+    uint SharedChunk;
+    uint SharedOffset;
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PushConstants;
 
+// Typed reads out of a bound chunk. CHUNK and BASE come from the push constants
+// and OFF is a compile-time constant, so the whole address folds to
+// uniform + literal.
+#define BD_CLOAD_U(CHUNK, BASE, OFF)  g_ConstantChunks[CHUNK].Load((BASE) + (OFF))
+#define BD_CLOAD_F(CHUNK, BASE, OFF)  asfloat(g_ConstantChunks[CHUNK].Load((BASE) + (OFF)))
+#define BD_CLOAD_F2(CHUNK, BASE, OFF) asfloat(g_ConstantChunks[CHUNK].Load2((BASE) + (OFF)))
+#define BD_CLOAD_F4(CHUNK, BASE, OFF) asfloat(g_ConstantChunks[CHUNK].Load4((BASE) + (OFF)))
+
+#define BD_SHARED_U(OFF)  BD_CLOAD_U(g_PushConstants.SharedChunk,  g_PushConstants.SharedOffset,  OFF)
+#define BD_SHARED_F(OFF)  BD_CLOAD_F(g_PushConstants.SharedChunk,  g_PushConstants.SharedOffset,  OFF)
+#define BD_SHARED_F2(OFF) BD_CLOAD_F2(g_PushConstants.SharedChunk, g_PushConstants.SharedOffset, OFF)
+
 #ifdef REBLUE_RECOMP
 // 256-bit boolean register file (BD bool addresses reach ~158), then per-usage 16-bit-pair swap masks.
-#define g_Booleans(i)              vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 256 + (i)*4)
-#define g_SwappedTexcoords         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 288)
-#define g_HalfPixelOffset          vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 292)
-#define g_AlphaThreshold           vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 300)
-#define g_SwappedNormals           vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 304)
-#define g_SwappedBinormals         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 308)
-#define g_SwappedTangents          vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 312)
-#define g_SwappedBlendWeights      vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 316)
-#define g_SwappedPositions         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 320)
-#define g_SintTexcoords            vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 324)
-#define g_ShadowPcfScale           vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 328)
+#define g_Booleans(i)              BD_SHARED_U(256 + (i)*4)
+#define g_SwappedTexcoords         BD_SHARED_U(288)
+#define g_HalfPixelOffset          BD_SHARED_F2(292)
+#define g_AlphaThreshold           BD_SHARED_F(300)
+#define g_SwappedNormals           BD_SHARED_U(304)
+#define g_SwappedBinormals         BD_SHARED_U(308)
+#define g_SwappedTangents          BD_SHARED_U(312)
+#define g_SwappedBlendWeights      BD_SHARED_U(316)
+#define g_SwappedPositions         BD_SHARED_U(320)
+#define g_SintTexcoords            BD_SHARED_U(324)
+#define g_ShadowPcfScale           BD_SHARED_F(328)
 // Multiview stereo. Both zero unless bd_stereo is on, so the per-eye skew every
 // vertex shader ends with costs two loads and a multiply-add and changes
 // nothing.
-#define g_StereoSeparation         vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 332)
-#define g_StereoConvergence        vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 344)
+#define g_StereoSeparation         BD_SHARED_F(332)
+#define g_StereoConvergence        BD_SHARED_F(344)
 #else
-#define g_Booleans                 vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 256)
-#define g_SwappedTexcoords         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 260)
-#define g_HalfPixelOffset          vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 264)
-#define g_AlphaThreshold           vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 272)
+#define g_Booleans                 BD_SHARED_U(256)
+#define g_SwappedTexcoords         BD_SHARED_U(260)
+#define g_HalfPixelOffset          BD_SHARED_F2(264)
+#define g_AlphaThreshold           BD_SHARED_F(272)
 #endif
 
 [[vk::constant_id(0)]] const uint g_SpecConstants = 0;
