@@ -2343,7 +2343,14 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 // carried no BuiltIn ViewIndex at all.
                 if (!isPixelShader)
                 {
-                    out += "\tconst float eyeSign = (iViewID == 0) ? -1.0f : 1.0f;\n";
+                    // View 0 is the LEFT eye and takes the POSITIVE constant.
+                    // Backwards renders the scene pseudoscopic - near geometry
+                    // separating uncrossed, the world inside out - which fuses
+                    // badly and is invisible in any symmetric test pose. Measured
+                    // with the sign the other way, tools/stereo_check.py --stacked
+                    // read far +2 / near +8: monotone with depth, so the skew was
+                    // reaching geometry correctly, and simply inverted.
+                    out += "\tconst float eyeSign = (iViewID == 0) ? 1.0f : -1.0f;\n";
                     out += "\toPos.x += eyeSign * (g_StereoSeparation - g_StereoConvergence * oPos.w);\n";
                 }
 #endif
