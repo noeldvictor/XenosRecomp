@@ -143,7 +143,7 @@ uint g_SpecConstants();
 // reports shaderInt64=0 and compiles none of them. See
 // research/20260830_0820_arm64-the-thor-renders-nothing.md.
 
-[[vk::binding(3, 0)]] Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
+[[vk::binding(3, 0)]] Texture2DArray<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
 [[vk::binding(3, 1)]] Texture3D<float4> g_Texture3DDescriptorHeap[] : register(t0, space1);
 [[vk::binding(3, 2)]] TextureCube<float4> g_TextureCubeDescriptorHeap[] : register(t0, space2);
 SamplerState g_SamplerDescriptorHeap[] : register(s0, space3);
@@ -154,22 +154,55 @@ TextureCube<float4> g_TextureCubeDescriptorHeap[] : register(t0, space2);
 SamplerState g_SamplerDescriptorHeap[] : register(s0, space3);
 #endif
 
-uint2 getTexture2DDimensions(Texture2D<float4> texture)
+// The 2D heap is an ARRAY heap under Vulkan, and every 2D read carries an array
+// layer of g_ViewIndex.
+//
+// This is what lets multiview work without a resolve. A two-layer render target
+// is sampled directly, each eye reading its own layer, so the five
+// full-resolution passes that existed only to flatten arrays into a
+// side-by-side companion disappear - and with them the reason the multiview
+// frame was black, which was that nothing could sample a two-layer image
+// through a Texture2D view at all.
+//
+// Ordinary textures are unaffected: Vulkan CLAMPS the array layer to
+// [0, layers-1] when sampling, so a one-layer texture read at layer 1 returns
+// layer 0. No per-texture knowledge is needed in the shader, which is the whole
+// reason this is tractable.
+//
+// DXIL keeps plain Texture2D - D3D12 has no multiview here and the descriptor
+// heap is declared 2D on that side.
+#ifdef __spirv__
+#define BD_TEX2D Texture2DArray<float4>
+#define BD_UV(uv) float3((uv), float(g_ViewIndex))
+#define BD_LOAD(c, mip) int4((c), int(g_ViewIndex), (mip))
+static uint g_ViewIndex = 0;
+#else
+#define BD_TEX2D Texture2D<float4>
+#define BD_UV(uv) (uv)
+#define BD_LOAD(c, mip) int3((c), (mip))
+#endif
+
+uint2 getTexture2DDimensions(BD_TEX2D texture)
 {
     uint2 dimensions;
+#ifdef __spirv__
+    uint elements;
+    texture.GetDimensions(dimensions.x, dimensions.y, elements);
+#else
     texture.GetDimensions(dimensions.x, dimensions.y);
+#endif
     return dimensions;
 }
 
 float4 tfetch2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
 {
-    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
-    return texture.Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord + offset / getTexture2DDimensions(texture));
+    BD_TEX2D texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+    return texture.Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], BD_UV(texCoord + offset / getTexture2DDimensions(texture)));
 }
 
 float2 getWeights2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
 {
-    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+    BD_TEX2D texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
     return select(isnan(texCoord), 0.0, frac(texCoord * getTexture2DDimensions(texture) + offset - 0.5));
 }
 
@@ -177,7 +210,7 @@ float2 getWeights2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, f
 // Bilinear-filtered shadow compare over the four neighboring depth texels.
 float shadowCmp2D(uint resourceDescriptorIndex, float2 texCoord, float ref)
 {
-    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+    BD_TEX2D texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
     int2 dimensions = int2(getTexture2DDimensions(texture));
     float2 coord = texCoord * dimensions - 0.5;
     float2 weights = frac(coord);
@@ -185,10 +218,10 @@ float shadowCmp2D(uint resourceDescriptorIndex, float2 texCoord, float ref)
     int2 c0 = clamp(base, int2(0, 0), dimensions - 1);
     int2 c1 = clamp(base + 1, int2(0, 0), dimensions - 1);
     float4 taps = float4(
-        texture.Load(int3(c0, 0)).x,
-        texture.Load(int3(c1.x, c0.y, 0)).x,
-        texture.Load(int3(c0.x, c1.y, 0)).x,
-        texture.Load(int3(c1, 0)).x) > ref;
+        texture.Load(BD_LOAD(c0, 0)).x,
+        texture.Load(BD_LOAD(int2(c1.x, c0.y), 0)).x,
+        texture.Load(BD_LOAD(int2(c0.x, c1.y), 0)).x,
+        texture.Load(BD_LOAD(c1, 0)).x) > ref;
     return lerp(lerp(taps.x, taps.y, weights.x), lerp(taps.z, taps.w, weights.x), weights.y);
 }
 #endif
@@ -235,7 +268,7 @@ float h1(float a)
 
 float4 tfetch2DBicubic(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
 {
-    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+    BD_TEX2D texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
     SamplerState samplerState = g_SamplerDescriptorHeap[samplerDescriptorIndex];
     uint2 dimensions = getTexture2DDimensions(texture);
     
@@ -257,10 +290,10 @@ float4 tfetch2DBicubic(uint resourceDescriptorIndex, uint samplerDescriptorIndex
     float h1y = h1(fy);
 
     float4 r =
-        g0(fy) * (g0x * texture.Sample(samplerState, float2(px + h0x, py + h0y) / float2(dimensions)) +
-            g1x * texture.Sample(samplerState, float2(px + h1x, py + h0y) / float2(dimensions))) +
-        g1(fy) * (g0x * texture.Sample(samplerState, float2(px + h0x, py + h1y) / float2(dimensions)) +
-            g1x * texture.Sample(samplerState, float2(px + h1x, py + h1y) / float2(dimensions)));
+        g0(fy) * (g0x * texture.Sample(samplerState, BD_UV(float2(px + h0x, py + h0y) / float2(dimensions))) +
+            g1x * texture.Sample(samplerState, BD_UV(float2(px + h1x, py + h0y) / float2(dimensions)))) +
+        g1(fy) * (g0x * texture.Sample(samplerState, BD_UV(float2(px + h0x, py + h1y) / float2(dimensions))) +
+            g1x * texture.Sample(samplerState, BD_UV(float2(px + h1x, py + h1y) / float2(dimensions))));
 
     return r;
 }

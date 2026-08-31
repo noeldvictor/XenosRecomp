@@ -29,7 +29,11 @@ IDxcBlob* DxcCompiler::compile(const std::string& shaderSource, bool compilePixe
     else
     {
         if (compilePixelShader)
-            target = L"-T ps_6_0";
+            // 6.1 for the same reason the vertex profile is: the pixel shader
+            // now reads SV_ViewID to pick the array layer for every 2D texture
+            // read, which is what lets a multiview target be sampled directly
+            // instead of being flattened into a side-by-side companion first.
+            target = L"-T ps_6_1";
         else
             // 6.1, not 6.0: SV_ViewID is a shader model 6.1 semantic and the
             // multiview stereo path declares it in every vertex shader. DXIL

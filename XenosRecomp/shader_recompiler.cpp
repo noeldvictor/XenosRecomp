@@ -1537,6 +1537,17 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         out += "\tin uint iFace : SV_IsFrontFace\n";
         out += "#endif\n";
 
+    #ifdef REBLUE_RECOMP
+        // Multiview: the pixel shader needs the view too, not just the
+        // vertex shader. Every 2D texture read now carries an array layer,
+        // and under multiview that layer is the eye - which is what lets the
+        // post chain sample a two-layer target directly instead of
+        // flattening it into a side-by-side companion first.
+        out += "#ifdef __spirv__\n";
+        out += "\t,in uint iViewID : SV_ViewID\n";
+        out += "#endif\n";
+    #endif
+
         auto pixelShader = reinterpret_cast<const PixelShader*>(shader);
         if (pixelShader->outputs & PIXEL_SHADER_OUTPUT_COLOR0)
             out += ",\n\tout float4 oC0 : SV_Target0";
@@ -1615,6 +1626,15 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
     out += ")\n";
     out += "{\n";
+
+#ifdef REBLUE_RECOMP
+    // The array layer every 2D read uses. Zero without multiview - a
+    // pipeline with no view mask reports view 0 - and a one-layer texture
+    // clamps to layer 0 anyway, so ordinary textures are unaffected.
+    out += "#ifdef __spirv__\n";
+    out += "\tg_ViewIndex = iViewID;\n";
+    out += "#endif\n";
+#endif
 
 #ifdef UNLEASHED_RECOMP
     if (hasMtxProjection)
