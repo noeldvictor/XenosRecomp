@@ -2385,7 +2385,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                     // with the sign the other way, tools/stereo_check.py --stacked
                     // read far +2 / near +8: monotone with depth, so the skew was
                     // reaching geometry correctly, and simply inverted.
-                    out += "\tconst float eyeSign = (iViewID == 0) ? 1.0f : -1.0f;\n";
+                    out += std::getenv("XENOS_RECOMP_NO_VS_VIEWID")
+                               ? "\tconst float eyeSign = 1.0f;\n"
+                               : "\tconst float eyeSign = (iViewID == 0) ? 1.0f : -1.0f;\n";
                     out += "\toPos.x += eyeSign * (g_StereoSeparation - g_StereoConvergence * oPos.w);\n";
                 }
 #endif
@@ -2453,6 +2455,18 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         out += "\toPos.xy += g_HalfPixelOffset * oPos.w;\n";
 #endif
 
+#ifdef REBLUE_RECOMP
+    // XENOS_RECOMP_POS_ONLY_VS in the environment zeroes every vertex output
+    // but the position, so DXC eliminates all the work that only fed them.
+    // A trace-only probe (2026-09-02): the image is wrong, and the question
+    // is whether the Adreno driver bins the scene pass once its binning
+    // pass - which re-runs every vertex shader - gets a small shader.
+    if (!isPixelShader && std::getenv("XENOS_RECOMP_POS_ONLY_VS"))
+    {
+        for (auto& [usage, usageIndex] : INTERPOLATORS)
+            print("\to{0}{1} = 0.0;\n", USAGE_VARIABLES[uint32_t(usage)], usageIndex);
+    }
+#endif
 
     out += "}";
 }
