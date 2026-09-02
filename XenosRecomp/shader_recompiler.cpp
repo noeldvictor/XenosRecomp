@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "shader_recompiler.h"
 #include "shader_common.h"
 
@@ -1615,7 +1616,15 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         // Multiview: one draw renders both eyes and SV_ViewID says which
         // one this invocation is for. Declared unconditionally - a pipeline
         // with no view mask sees 0, and the skew below is zero anyway.
-        out += "\tin uint iViewID : SV_ViewID,\n";
+        //
+        // XENOS_RECOMP_NO_VS_VIEWID in the environment drops it from vertex
+        // shaders: a probe for the Adreno render-stage trace, which showed the
+        // scene pass in direct (non-tiled) mode with every other candidate
+        // eliminated, and a vertex shader that reads ViewIndex in a
+        // non-multiview pass is the last difference between the scene draws
+        // and the passes that bin. Not for shipping - multiview needs it.
+        if (!std::getenv("XENOS_RECOMP_NO_VS_VIEWID"))
+            out += "\tin uint iViewID : SV_ViewID,\n";
     #endif
 
         out += "\tout float4 oPos : SV_Position";
@@ -1632,7 +1641,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     // pipeline with no view mask reports view 0 - and a one-layer texture
     // clamps to layer 0 anyway, so ordinary textures are unaffected.
     out += "#ifdef __spirv__\n";
-    out += "\tg_ViewIndex = iViewID;\n";
+    if (std::getenv("XENOS_RECOMP_NO_VS_VIEWID"))
+        out += "\tg_ViewIndex = 0u;\n";
+    else
+        out += "\tg_ViewIndex = iViewID;\n";
     out += "#endif\n";
 #endif
 
