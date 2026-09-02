@@ -50,9 +50,9 @@
 // 352-byte shared block as 22 uint4s. uint4 rather than float4 for the shared
 // block because it carries descriptor indices and swap masks as raw bits, and
 // a float register may flush a denormal on load.
-[[vk::binding(0, 3)]] cbuffer VertexShaderConstantsBuf { float4 g_VSC[256]; };
-[[vk::binding(1, 3)]] cbuffer PixelShaderConstantsBuf  { float4 g_PSC[224]; };
-[[vk::binding(2, 3)]] cbuffer SharedConstantsBuf       { uint4  g_SHC[22];  };
+[[vk::binding(0, 2)]] cbuffer VertexShaderConstantsBuf { float4 g_VSC[256]; };
+[[vk::binding(1, 2)]] cbuffer PixelShaderConstantsBuf  { float4 g_PSC[224]; };
+[[vk::binding(2, 2)]] cbuffer SharedConstantsBuf       { uint4  g_SHC[22];  };
 
 // Byte offset into the shared block -> element and component. Both fold at
 // compile time wherever OFF is a literal, which is everywhere except
@@ -127,21 +127,24 @@ uint g_SpecConstants();
 #endif
 
 #ifdef __spirv__
-// Guest constant chunks live in the SAMPLER set (space 3, bindings 0-2), ahead
-// of the sampler array, and the texture heaps sit at binding 0 of their own
-// sets.
+// The Vulkan layout, four sets, which is every set Adreno allows
+// (maxBoundDescriptorSets = 4):
 //
-// They cannot have a set of their own: the pipeline layout already binds four
-// (spaces 0/1/2 all point at the texture set, 3 at the samplers) and Adreno's
-// maxBoundDescriptorSets is exactly 4. They used to sit ahead of the texture
-// array in set 0, and that cost a quarter of the frame: the Adreno driver
-// copies a descriptor set's contents every time it is bound with dynamic
-// offsets, so re-basing the constants per draw copied the entire 4096-entry
-// texture array with them - 56% of the render thread's samples in one driver
-// memcpy, measured on a Quest 2 on 2026-09-01. Shrinking that array to 1024
-// took the copy to 6% and the thread from 44ms to 19ms. The sampler set is 256
-// entries, so the per-draw copy is now small; the boundless range still has to
-// be last, which is why the constants take bindings 0-2 and the samplers 3.
+//   set 0  the texture heaps: binding 0 Texture2DArray[], 1 Texture3D[],
+//          2 TextureCube[] - three bindings of one set, where they used to be
+//          three register spaces bound to one physical array
+//   set 1  the sampler heap at binding 0
+//   set 2  the guest constant blocks, bindings 0-2, as dynamic uniform
+//          buffers re-based per draw
+//   set 3  the sun occlusion counter
+//
+// The constants have a set of their own because the Adreno driver copies a
+// descriptor set's contents every time it is bound with dynamic offsets: with
+// the three ranges ahead of the texture array, re-basing them per draw copied
+// the entire 4096-entry array - 56% of the render thread's samples in one
+// driver memcpy, measured on a Quest 2 on 2026-09-01. A set holding only the
+// three ranges copies 48 bytes. It also satisfies the rule that a set with an
+// update-after-bind binding holds no dynamic buffer (VUID 03001).
 // [[vk::binding]] is ignored when DXC targets DXIL.
 //
 // Why this exists at all: reading a guest constant through a 64-bit device
@@ -150,9 +153,9 @@ uint g_SpecConstants();
 // research/20260830_0820_arm64-the-thor-renders-nothing.md.
 
 [[vk::binding(0, 0)]] Texture2DArray<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
-[[vk::binding(0, 1)]] Texture3D<float4> g_Texture3DDescriptorHeap[] : register(t0, space1);
-[[vk::binding(0, 2)]] TextureCube<float4> g_TextureCubeDescriptorHeap[] : register(t0, space2);
-[[vk::binding(3, 3)]] SamplerState g_SamplerDescriptorHeap[] : register(s0, space3);
+[[vk::binding(1, 0)]] Texture3D<float4> g_Texture3DDescriptorHeap[] : register(t0, space1);
+[[vk::binding(2, 0)]] TextureCube<float4> g_TextureCubeDescriptorHeap[] : register(t0, space2);
+[[vk::binding(0, 1)]] SamplerState g_SamplerDescriptorHeap[] : register(s0, space3);
 #else
 Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
 Texture3D<float4> g_Texture3DDescriptorHeap[] : register(t0, space1);
