@@ -30,6 +30,7 @@ struct RecompiledShader
     IDxcBlob* dxil = nullptr;
     std::vector<uint8_t> spirv;
     uint32_t specConstantsMask = 0;
+    uint32_t constantRegisterMask[8] = {};
     std::string sourceName;
 };
 
@@ -160,6 +161,8 @@ int main(int argc, char** argv)
                 recompiler.recompile(shader.data, include);
 
                 shader.specConstantsMask = recompiler.specConstantsMask;
+                std::copy(std::begin(recompiler.constantRegisterMask), std::end(recompiler.constantRegisterMask),
+                    std::begin(shader.constantRegisterMask));
 
                 if (!hlslDumpDir.empty())
                 {
@@ -257,8 +260,10 @@ int main(int argc, char** argv)
 
         for (auto& [hash, shader] : shaders)
         {
-            f.println("\t{{ 0x{:X}, {}, {}, {}, {}, {} }},",
-                hash, dxil.size(), (shader.dxil != nullptr) ? shader.dxil->GetBufferSize() : 0, spirv.size(), shader.spirv.size(), shader.specConstantsMask);
+            const auto& m = shader.constantRegisterMask;
+            f.println("\t{{ 0x{:X}, {}, {}, {}, {}, {}, {{ 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X} }} }},",
+                hash, dxil.size(), (shader.dxil != nullptr) ? shader.dxil->GetBufferSize() : 0, spirv.size(), shader.spirv.size(), shader.specConstantsMask,
+                m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7]);
 
             if (shader.dxil != nullptr)
             {

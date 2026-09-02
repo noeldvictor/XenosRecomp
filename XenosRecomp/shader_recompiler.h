@@ -36,6 +36,13 @@ struct ShaderRecompiler : StringBuffer
     // emitted (then-branch close is part of the event, not ifEndLabels).
     std::unordered_set<uint32_t> elseLabels;
     uint32_t specConstantsMask = 0;
+    // Which float4 constant registers the shader declares (bit r = register
+    // r), from its constant table. The host compares and hashes a guest
+    // constant block only over these, because the guest writes registers no
+    // shader reads (Blue Dragon's scene walk fills a per-node block of which
+    // a vertex shader reads a few), and a compare over the whole block
+    // finds every node different.
+    uint32_t constantRegisterMask[8] = {};
 
 #ifdef UNLEASHED_RECOMP
     bool hasMtxProjection = false;

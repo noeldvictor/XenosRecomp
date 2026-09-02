@@ -4,6 +4,15 @@
 #define SPEC_CONSTANT_R11G11B10_NORMAL  (1 << 0)
 #define SPEC_CONSTANT_ALPHA_TEST        (1 << 1)
 
+#ifndef UNLEASHED_RECOMP
+// The vertex shader reads every float4 constant from the instance record
+// selected by SV_InstanceID instead of the uniform block, so one draw can
+// carry many nodes whatever the guest wrote per node. Every vertex shader
+// carries the bit in its mask; the host builds the instanced twin of a
+// pipeline by setting it.
+#define SPEC_CONSTANT_INSTANCED         (1 << 2)
+#endif
+
 #ifdef UNLEASHED_RECOMP
     #define SPEC_CONSTANT_BICUBIC_GI_FILTER (1 << 2)
     #define SPEC_CONSTANT_ALPHA_TO_COVERAGE (1 << 3)
@@ -89,6 +98,39 @@
 [[vk::constant_id(0)]] const uint g_SpecConstants = 0;
 
 #define g_SpecConstants() g_SpecConstants
+
+#ifdef REBLUE_RECOMP
+// Instance records: one scene node's whole vertex constant block, byte for
+// byte what the uniform window holds for a non-instanced draw. One structured
+// buffer per device, binding 3 of the constant set, indexed by SV_InstanceID
+// (which on Vulkan includes firstInstance, so the host passes a record index
+// there and pushes nothing per draw).
+//
+// Why: the scene pass is draw-bound on Adreno - ~36 us of GPU per draw, and
+// no fragment-side change moved it (2026-09-02). The per-draw cost is the
+// re-based constant window and the binds; instancing removes both for every
+// node that shares a mesh and a material. The whole block rather than the
+// world matrix and palette because the guest writes other registers per
+// node too (a collision vector at c57 for foliage, for one), and any such
+// register would otherwise keep two nodes from sharing a draw. The vertex
+// stage is ~1% of the frame, so reading its constants from a 4 KB record
+// that stays in cache instead of the constant path is a trade it can afford.
+struct BDInstanceRecord
+{
+    float4 regs[256];
+};
+[[vk::binding(3, 2)]] StructuredBuffer<BDInstanceRecord> g_Instances : register(t0, space6);
+static uint g_InstanceIndex = 0;
+
+// A vertex constant register: from the record under the instanced variant,
+// from the uniform window otherwise. The spec constant folds the branch.
+float4 BD_VSC(uint reg)
+{
+    if (g_SpecConstants() & SPEC_CONSTANT_INSTANCED)
+        return g_Instances[g_InstanceIndex].regs[reg];
+    return g_VSC[reg];
+}
+#endif
 
 #else
 

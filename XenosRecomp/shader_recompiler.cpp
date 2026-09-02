@@ -1,6 +1,8 @@
 #include <cstdlib>
+#include <cstring>
 #include "shader_recompiler.h"
 #include "shader_common.h"
+
 
 static constexpr char SWIZZLES[] = 
 { 
@@ -1296,6 +1298,16 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     bool hasIndexCount = false;
 #endif
 
+#ifdef REBLUE_RECOMP
+    // Instancing (SPEC_CONSTANT_INSTANCED, see shader_common.h): every
+    // vertex shader reads its float4 constants through BD_VSC, which the
+    // instanced pipeline variant redirects into the instance record - the
+    // whole block, so nothing the guest writes per node is left behind.
+    const bool instancedRedirect = !isPixelShader;
+    if (instancedRedirect)
+        specConstantsMask |= SPEC_CONSTANT_INSTANCED;
+#endif
+
     for (uint32_t i = 0; i < constantTableContainer->constantTable.constants; i++)
     {
         const auto constantInfo = reinterpret_cast<const ConstantInfo*>(
@@ -1337,6 +1349,24 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             // byte offset, so the whole address is a literal.
             const char* constBuf = isPixelShader ? "g_PSC" : "g_VSC";
 
+#ifdef REBLUE_RECOMP
+            if (instancedRedirect)
+            {
+                // Through BD_VSC: the record under the instanced variant, the
+                // uniform block otherwise. The register-file clamp stays.
+                if (constantInfo->registerCount > 1)
+                {
+                    uint32_t tailCount = 256 - constantInfo->registerIndex;
+                    println("#define {}(INDEX) select((INDEX) < {}, BD_VSC({} + min(INDEX, {})), 0.0)",
+                        constantName, tailCount, constantInfo->registerIndex.get(), tailCount - 1);
+                }
+                else
+                {
+                    println("#define {} BD_VSC({})", constantName, constantInfo->registerIndex.get());
+                }
+            }
+            else
+#endif
             if (constantInfo->registerCount > 1)
             {
                 uint32_t tailCount = (isPixelShader ? 224 : 256) - constantInfo->registerIndex;
@@ -1400,6 +1430,14 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             r, std::size(TEXTURE_DIMENSIONS) * 64 + r * 4);
     }
 #endif
+
+    // Every float4 register a declared constant covers, for the host's
+    // constant compare (shader_recompiler.h constantRegisterMask).
+    for (const auto& [reg, info] : float4Constants)
+    {
+        if (reg < 256)
+            constantRegisterMask[reg / 32] |= 1u << (reg % 32);
+    }
 
     out += "\n#else\n\n";
 
@@ -1625,6 +1663,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         // and the passes that bin. Not for shipping - multiview needs it.
         if (!std::getenv("XENOS_RECOMP_NO_VS_VIEWID"))
             out += "\tin uint iViewID : SV_ViewID,\n";
+        // Instancing: which record this invocation reads (shader_common.h).
+        // Declared on every vertex shader; a non-instanced draw sees 0 and
+        // the plain variant never reads it.
+        out += "\tin uint iInstanceId : SV_InstanceID,\n";
     #endif
 
         out += "\tout float4 oPos : SV_Position";
@@ -1645,6 +1687,8 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         out += "\tg_ViewIndex = 0u;\n";
     else
         out += "\tg_ViewIndex = iViewID;\n";
+    if (!isPixelShader)
+        out += "\tg_InstanceIndex = iInstanceId;\n";
     out += "#endif\n";
 #endif
 
