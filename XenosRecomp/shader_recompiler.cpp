@@ -1303,7 +1303,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     // vertex shader reads its float4 constants through BD_VSC, which the
     // instanced pipeline variant redirects into the instance record - the
     // whole block, so nothing the guest writes per node is left behind.
-    const bool instancedRedirect = !isPixelShader;
+    // XENOS_RECOMP_NO_INSTANCING in the environment builds the vertex shaders
+    // without the record path, the instance input and the spec bit - the
+    // probe that says whether that machinery costs anything on Adreno when
+    // the plain variant runs (Quest 2, 2026-09-02).
+    const bool instancedRedirect = !isPixelShader && !std::getenv("XENOS_RECOMP_NO_INSTANCING");
     if (instancedRedirect)
         specConstantsMask |= SPEC_CONSTANT_INSTANCED;
 #endif
@@ -1666,7 +1670,8 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         // Instancing: which record this invocation reads (shader_common.h).
         // Declared on every vertex shader; a non-instanced draw sees 0 and
         // the plain variant never reads it.
-        out += "\tin uint iInstanceId : SV_InstanceID,\n";
+        if (!std::getenv("XENOS_RECOMP_NO_INSTANCING"))
+            out += "\tin uint iInstanceId : SV_InstanceID,\n";
     #endif
 
         out += "\tout float4 oPos : SV_Position";
@@ -1687,7 +1692,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         out += "\tg_ViewIndex = 0u;\n";
     else
         out += "\tg_ViewIndex = iViewID;\n";
-    if (!isPixelShader)
+    if (!isPixelShader && !std::getenv("XENOS_RECOMP_NO_INSTANCING"))
         out += "\tg_InstanceIndex = iInstanceId;\n";
     out += "#endif\n";
 #endif
