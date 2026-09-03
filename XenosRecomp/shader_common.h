@@ -11,6 +11,12 @@
 // carries the bit in its mask; the host builds the instanced twin of a
 // pipeline by setting it.
 #define SPEC_CONSTANT_INSTANCED         (1 << 2)
+// The vertex shader pulls its attributes from the instance record's stream
+// buffers instead of the input assembler (BD_PullF/BD_PullU below), so one
+// indirect draw can cover meshes bound at different offsets. Every vertex
+// shader carries the bit; the host builds the pulled twin of a pipeline
+// only for the draws it groups (2026-09-03).
+#define SPEC_CONSTANT_PULLED            (1 << 3)
 // The pixel shader's lit colour is quantised into bands before export: cel
 // shading as a lighting-model switch on any material, selected per draw by
 // the host (Blue Dragon's characters, the skinned draws). Every pixel shader
@@ -134,6 +140,115 @@ float4 BD_VSC(uint reg)
     if (g_SpecConstants() & SPEC_CONSTANT_INSTANCED)
         return g_Instances[g_InstanceIndex].regs[reg];
     return g_VSC[reg];
+}
+
+// Vertex pulling (SPEC_CONSTANT_PULLED). Per instance record: each stream's
+// buffer slot in the block heap, its base byte offset and stride, and the
+// declaration's id. Per declaration: sixteen packed entries indexed by the
+// attribute location (REBLUE_VERTEX_INPUT_LOCATIONS): code << 24 | slot << 16
+// | byte offset, zero for an attribute the declaration does not carry. The
+// code names the input assembler format the host would have bound, and the
+// decode below reproduces that format's conversion, so the value the shader
+// sees is the one the assembler would have delivered (the swapFloats and
+// sintTexcoord post-processing in the shader stays as it is).
+struct BDPullInfo
+{
+    uint4 streams[16]; // x: heap slot, y: base offset, z: stride
+    uint decl;
+    uint3 pad;
+};
+[[vk::binding(4, 2)]] StructuredBuffer<BDPullInfo> g_PullInfo : register(t1, space6);
+[[vk::binding(5, 2)]] StructuredBuffer<uint> g_DeclTable : register(t2, space6);
+[[vk::binding(3, 0)]] ByteAddressBuffer g_VertexBufferHeap[] : register(t0, space7);
+static uint g_VertexIndex = 0;
+
+#define BD_PULL_R32_FLOAT           1u
+#define BD_PULL_R32G32_FLOAT        2u
+#define BD_PULL_R32G32B32_FLOAT     3u
+#define BD_PULL_R32G32B32A32_FLOAT  4u
+#define BD_PULL_B8G8R8A8_UNORM      5u
+#define BD_PULL_R8G8B8A8_UINT       6u
+#define BD_PULL_R8G8B8A8_UNORM      7u
+#define BD_PULL_R16G16_SINT         8u
+#define BD_PULL_R16G16_SNORM        9u
+#define BD_PULL_R16G16B16A16_SNORM  10u
+#define BD_PULL_R16G16_UNORM        11u
+#define BD_PULL_R16G16B16A16_UNORM  12u
+#define BD_PULL_R16G16_FLOAT        13u
+#define BD_PULL_R16G16B16A16_FLOAT  14u
+#define BD_PULL_R32_UINT            15u
+#define BD_PULL_R16G16B16A16_SINT   16u
+
+// The element's first four dwords at any byte alignment.
+uint4 BD_PullDwords(uint location, out uint code)
+{
+    BDPullInfo pi = g_PullInfo[g_InstanceIndex];
+    uint e = g_DeclTable[pi.decl * 16u + location];
+    code = e >> 24;
+    if (e == 0u)
+        return uint4(0, 0, 0, 0);
+    uint slot = (e >> 16) & 0xFFu;
+    uint4 st = pi.streams[slot];
+    uint addr = st.y + g_VertexIndex * st.z + (e & 0xFFFFu);
+    uint a0 = addr & ~3u;
+    uint sh = (addr & 3u) * 8u;
+    uint4 w = g_VertexBufferHeap[NonUniformResourceIndex(st.x)].Load4(a0);
+    if (sh == 0u)
+        return w;
+    uint w4 = g_VertexBufferHeap[NonUniformResourceIndex(st.x)].Load(a0 + 16u);
+    return uint4((w.x >> sh) | (w.y << (32u - sh)), (w.y >> sh) | (w.z << (32u - sh)),
+                 (w.z >> sh) | (w.w << (32u - sh)), (w.w >> sh) | (w4 << (32u - sh)));
+}
+
+float BD_Snorm16(uint bits) { return max(float(int(bits << 16) >> 16) / 32767.0, -1.0); }
+float BD_Unorm16(uint bits) { return float(bits & 0xFFFFu) / 65535.0; }
+float BD_Sint16(uint bits) { return float(int(bits << 16) >> 16); }
+
+float4 BD_PullF(uint location)
+{
+    uint code;
+    uint4 d = BD_PullDwords(location, code);
+    switch (code)
+    {
+    case BD_PULL_R32_FLOAT: return float4(asfloat(d.x), 0.0, 0.0, 1.0);
+    case BD_PULL_R32G32_FLOAT: return float4(asfloat(d.x), asfloat(d.y), 0.0, 1.0);
+    case BD_PULL_R32G32B32_FLOAT: return float4(asfloat(d.x), asfloat(d.y), asfloat(d.z), 1.0);
+    case BD_PULL_R32G32B32A32_FLOAT: return asfloat(d);
+    case BD_PULL_B8G8R8A8_UNORM:
+        return float4((d.x >> 16) & 0xFFu, (d.x >> 8) & 0xFFu, d.x & 0xFFu, d.x >> 24) / 255.0;
+    case BD_PULL_R8G8B8A8_UINT:
+        return float4(d.x & 0xFFu, (d.x >> 8) & 0xFFu, (d.x >> 16) & 0xFFu, d.x >> 24);
+    case BD_PULL_R8G8B8A8_UNORM:
+        return float4(d.x & 0xFFu, (d.x >> 8) & 0xFFu, (d.x >> 16) & 0xFFu, d.x >> 24) / 255.0;
+    case BD_PULL_R16G16_SINT: return float4(BD_Sint16(d.x), BD_Sint16(d.x >> 16), 0.0, 1.0);
+    case BD_PULL_R16G16B16A16_SINT:
+        return float4(BD_Sint16(d.x), BD_Sint16(d.x >> 16), BD_Sint16(d.y), BD_Sint16(d.y >> 16));
+    case BD_PULL_R16G16_SNORM: return float4(BD_Snorm16(d.x), BD_Snorm16(d.x >> 16), 0.0, 1.0);
+    case BD_PULL_R16G16B16A16_SNORM:
+        return float4(BD_Snorm16(d.x), BD_Snorm16(d.x >> 16), BD_Snorm16(d.y), BD_Snorm16(d.y >> 16));
+    case BD_PULL_R16G16_UNORM: return float4(BD_Unorm16(d.x), BD_Unorm16(d.x >> 16), 0.0, 1.0);
+    case BD_PULL_R16G16B16A16_UNORM:
+        return float4(BD_Unorm16(d.x), BD_Unorm16(d.x >> 16), BD_Unorm16(d.y), BD_Unorm16(d.y >> 16));
+    case BD_PULL_R16G16_FLOAT: return float4(f16tof32(d.x), f16tof32(d.x >> 16), 0.0, 1.0);
+    case BD_PULL_R16G16B16A16_FLOAT:
+        return float4(f16tof32(d.x), f16tof32(d.x >> 16), f16tof32(d.y), f16tof32(d.y >> 16));
+    case BD_PULL_R32_UINT: return float4(asfloat(d.x), 0.0, 0.0, 1.0);
+    default: return float4(0.0, 0.0, 0.0, 1.0);
+    }
+}
+
+uint4 BD_PullU(uint location)
+{
+    uint code;
+    uint4 d = BD_PullDwords(location, code);
+    switch (code)
+    {
+    case BD_PULL_R8G8B8A8_UINT:
+        return uint4(d.x & 0xFFu, (d.x >> 8) & 0xFFu, (d.x >> 16) & 0xFFu, d.x >> 24);
+    case BD_PULL_R32_UINT: return uint4(d.x, 0u, 0u, 1u);
+    case 0u: return uint4(0u, 0u, 0u, 1u);
+    default: return asuint(BD_PullF(location));
+    }
 }
 #endif
 

@@ -239,7 +239,13 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
     }
 #endif
 
+#ifdef REBLUE_RECOMP
+    // The v-local declared in the prologue: the assembler's input, or the
+    // pulled attribute under SPEC_CONSTANT_PULLED.
+    print("v{}{}", USAGE_VARIABLES[uint32_t(findResult->second.usage)], uint32_t(findResult->second.usageIndex));
+#else
     print("i{}{}", USAGE_VARIABLES[uint32_t(findResult->second.usage)], uint32_t(findResult->second.usageIndex));
+#endif
 
 #ifdef REBLUE_RECOMP
     switch (findResult->second.usage)
@@ -1309,7 +1315,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     // the plain variant runs (Quest 2, 2026-09-02).
     const bool instancedRedirect = !isPixelShader && !std::getenv("XENOS_RECOMP_NO_INSTANCING");
     if (instancedRedirect)
-        specConstantsMask |= SPEC_CONSTANT_INSTANCED;
+        specConstantsMask |= SPEC_CONSTANT_INSTANCED | SPEC_CONSTANT_PULLED;
 #endif
 
     for (uint32_t i = 0; i < constantTableContainer->constantTable.constants; i++)
@@ -1671,7 +1677,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         // Declared on every vertex shader; a non-instanced draw sees 0 and
         // the plain variant never reads it.
         if (!std::getenv("XENOS_RECOMP_NO_INSTANCING"))
+        {
             out += "\tin uint iInstanceId : SV_InstanceID,\n";
+            // Vertex pulling: the index value this invocation fetches at.
+            out += "\tin uint iVertexId : SV_VertexID,\n";
+        }
     #endif
 
         out += "\tout float4 oPos : SV_Position";
@@ -1693,8 +1703,44 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     else
         out += "\tg_ViewIndex = iViewID;\n";
     if (!isPixelShader && !std::getenv("XENOS_RECOMP_NO_INSTANCING"))
+    {
         out += "\tg_InstanceIndex = iInstanceId;\n";
+        out += "\tg_VertexIndex = iVertexId;\n";
+    }
     out += "#endif\n";
+
+    // Every vertex attribute as a local: the assembler's input, or under
+    // SPEC_CONSTANT_PULLED the attribute pulled from the instance record's
+    // streams (shader_common.h). The fetch sites read the local.
+    if (!isPixelShader)
+    {
+        const bool pulled = !std::getenv("XENOS_RECOMP_NO_INSTANCING");
+        for (auto& [address, element] : vertexElements)
+        {
+            const char* type = USAGE_TYPES[uint32_t(element.usage)];
+            const char* var = USAGE_VARIABLES[uint32_t(element.usage)];
+            uint32_t location = 0;
+            for (auto& usageLocation : USAGE_LOCATIONS)
+            {
+                if (usageLocation.usage == element.usage && usageLocation.usageIndex == element.usageIndex)
+                    location = usageLocation.location;
+            }
+            const bool isUint = std::strcmp(type, "uint4") == 0;
+            if (pulled)
+            {
+                out += "#ifdef __spirv__\n";
+                println("\t{0} v{1}{2} = (g_SpecConstants() & SPEC_CONSTANT_PULLED) ? {3}({4}u) : i{1}{2};",
+                    type, var, uint32_t(element.usageIndex), isUint ? "BD_PullU" : "BD_PullF", location);
+                out += "#else\n";
+                println("\t{0} v{1}{2} = i{1}{2};", type, var, uint32_t(element.usageIndex));
+                out += "#endif\n";
+            }
+            else
+            {
+                println("\t{0} v{1}{2} = i{1}{2};", type, var, uint32_t(element.usageIndex));
+            }
+        }
+    }
 #endif
 
 #ifdef UNLEASHED_RECOMP
