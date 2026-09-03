@@ -126,9 +126,18 @@
 // register would otherwise keep two nodes from sharing a draw. The vertex
 // stage is ~1% of the frame, so reading its constants from a 4 KB record
 // that stays in cache instead of the constant path is a trade it can afford.
+// The record: the vertex constant block as the node wrote it, and a bit per
+// register saying which of them differ from the uniform block bound for the
+// group (the first record's, uploaded as an ordinary window). An instanced
+// read takes the record only for those, the uniform block for the rest: on
+// Adreno a uniform constant is preloaded and a storage-buffer read is a
+// memory load per invocation, and every scene draw reading its whole block
+// from the record put the scene pass at 28 ms against 19.5 (Quest 2,
+// 2026-09-02). A mask of all ones is the old behaviour.
 struct BDInstanceRecord
 {
     float4 regs[256];
+    uint4 mask[2];
 };
 [[vk::binding(3, 2)]] StructuredBuffer<BDInstanceRecord> g_Instances : register(t0, space6);
 static uint g_InstanceIndex = 0;
@@ -138,7 +147,11 @@ static uint g_InstanceIndex = 0;
 float4 BD_VSC(uint reg)
 {
     if (g_SpecConstants() & SPEC_CONSTANT_INSTANCED)
-        return g_Instances[g_InstanceIndex].regs[reg];
+    {
+        uint word = g_Instances[g_InstanceIndex].mask[reg >> 7][(reg >> 5) & 3u];
+        if ((word >> (reg & 31u)) & 1u)
+            return g_Instances[g_InstanceIndex].regs[reg];
+    }
     return g_VSC[reg];
 }
 
