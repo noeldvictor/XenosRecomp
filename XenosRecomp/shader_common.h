@@ -11,6 +11,11 @@
 // carries the bit in its mask; the host builds the instanced twin of a
 // pipeline by setting it.
 #define SPEC_CONSTANT_INSTANCED         (1 << 2)
+// The pixel shader's lit colour is quantised into bands before export: cel
+// shading as a lighting-model switch on any material, selected per draw by
+// the host (Blue Dragon's characters, the skinned draws). Every pixel shader
+// that exports oC0 carries the bit in its mask.
+#define SPEC_CONSTANT_CEL               (1 << 5)
 #endif
 
 #ifdef UNLEASHED_RECOMP
@@ -244,6 +249,20 @@ uint2 getTexture2DDimensions(BD_TEX2D texture)
 #endif
     return dimensions;
 }
+
+#ifndef UNLEASHED_RECOMP
+// SPEC_CONSTANT_CEL: the exported colour's luminance snapped to a few bands,
+// chroma kept. Bands on the lit colour rather than on the diffuse term, which
+// the recompiled shader never exposes; approximate, as the owner allowed.
+float3 BD_CelBand(float3 c)
+{
+    const float kBands = 4.0;
+    const float luma = max(dot(c, float3(0.299, 0.587, 0.114)), 1e-4);
+    const float banded = (floor(luma * kBands) + 0.5) / kBands;
+    return c * (banded / luma);
+}
+#endif
+
 
 float4 tfetch2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
 {

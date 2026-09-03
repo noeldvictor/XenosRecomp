@@ -2377,6 +2377,15 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             {
                 if (isPixelShader)
                 {
+                #ifndef UNLEASHED_RECOMP
+                    specConstantsMask |= SPEC_CONSTANT_CEL;
+
+                    indent();
+                    out += "[branch] if (g_SpecConstants() & SPEC_CONSTANT_CEL)";
+                    indent();
+                    out += "\toC0.xyz = BD_CelBand(oC0.xyz);\n";
+                #endif
+
                     specConstantsMask |= SPEC_CONSTANT_ALPHA_TEST;
 
                     indent();
