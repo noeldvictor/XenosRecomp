@@ -36,7 +36,9 @@
 #define BD_ALPHA_ALWAYS        7u
 
 // Shared C++/HLSL predicate: CPU contract tests exercise the shader's actual
-// comparisons, including equality boundaries and unordered values.
+// comparisons, including equality boundaries. Numeric modes reject unordered
+// values on both CPU and GPU; Always alone accepts them. Spell ordered != as
+// < || > because C++ != accepts NaN while DXC emits an ordered comparison.
 inline unsigned int BD_AlphaMode(unsigned int spec)
 {
     return (spec & SPEC_CONSTANT_ALPHA_COMPARE_MASK) >> SPEC_CONSTANT_ALPHA_COMPARE_SHIFT;
@@ -50,7 +52,7 @@ inline bool BD_AlphaPass(unsigned int mode, float alpha, float threshold)
     case BD_ALPHA_EQUAL: return alpha == threshold;
     case BD_ALPHA_LESS_EQUAL: return alpha <= threshold;
     case BD_ALPHA_GREATER: return alpha > threshold;
-    case BD_ALPHA_NOT_EQUAL: return alpha != threshold;
+    case BD_ALPHA_NOT_EQUAL: return alpha < threshold || alpha > threshold;
     case BD_ALPHA_ALWAYS: return true;
     default: return alpha >= threshold;
     }

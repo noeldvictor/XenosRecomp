@@ -2433,6 +2433,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 #endif
 
                     specConstantsMask |= SPEC_CONSTANT_ALPHA_TEST;
+                #ifdef REBLUE_RECOMP
+                    specConstantsMask |= SPEC_CONSTANT_ALPHA_COMPARE_MASK;
+                #endif
 
                     indent();
                     out += "[branch] if (g_SpecConstants() & SPEC_CONSTANT_ALPHA_TEST)";
@@ -2440,7 +2443,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                     out += '{';
 
                     indent();
+                #ifdef REBLUE_RECOMP
+                    out += "\tclip(BD_AlphaPass(BD_AlphaMode(g_SpecConstants()), oC0.w, g_AlphaThreshold) ? 1.0 : -1.0);\n";
+                #else
                     out += "\tclip(oC0.w - g_AlphaThreshold);\n";
+                #endif
 
                     indent();
                     out += "}";
