@@ -22,6 +22,39 @@
 // the host (Blue Dragon's characters, the skinned draws). Every pixel shader
 // that exports oC0 carries the bit in its mask.
 #define SPEC_CONSTANT_CEL               (1 << 5)
+// Native alpha comparison. Zero preserves the historical >= shader variant;
+// these are host shader modes, not engine render-state values.
+#define SPEC_CONSTANT_ALPHA_COMPARE_SHIFT 6
+#define SPEC_CONSTANT_ALPHA_COMPARE_MASK (7u << SPEC_CONSTANT_ALPHA_COMPARE_SHIFT)
+#define BD_ALPHA_GREATER_EQUAL 0u
+#define BD_ALPHA_NEVER         1u
+#define BD_ALPHA_LESS          2u
+#define BD_ALPHA_EQUAL         3u
+#define BD_ALPHA_LESS_EQUAL    4u
+#define BD_ALPHA_GREATER       5u
+#define BD_ALPHA_NOT_EQUAL     6u
+#define BD_ALPHA_ALWAYS        7u
+
+// Shared C++/HLSL predicate: CPU contract tests exercise the shader's actual
+// comparisons, including equality boundaries and unordered values.
+inline unsigned int BD_AlphaMode(unsigned int spec)
+{
+    return (spec & SPEC_CONSTANT_ALPHA_COMPARE_MASK) >> SPEC_CONSTANT_ALPHA_COMPARE_SHIFT;
+}
+inline bool BD_AlphaPass(unsigned int mode, float alpha, float threshold)
+{
+    switch (mode)
+    {
+    case BD_ALPHA_NEVER: return false;
+    case BD_ALPHA_LESS: return alpha < threshold;
+    case BD_ALPHA_EQUAL: return alpha == threshold;
+    case BD_ALPHA_LESS_EQUAL: return alpha <= threshold;
+    case BD_ALPHA_GREATER: return alpha > threshold;
+    case BD_ALPHA_NOT_EQUAL: return alpha != threshold;
+    case BD_ALPHA_ALWAYS: return true;
+    default: return alpha >= threshold;
+    }
+}
 #endif
 
 #ifdef UNLEASHED_RECOMP
